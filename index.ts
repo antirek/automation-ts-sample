@@ -45,10 +45,19 @@ class FlowTask {
       return;
     }
     const nextStepId = currentStep.next(data);
-    let nextStep;
-    if (this.flow && this.flow.steps) {
-      nextStep = this.flow.steps.find(step => step.id === nextStepId)
+    if (!nextStepId) {
+      console.log('no nextStepId on currentStepId:', currentStep.id, ', data:', data);
     }
+    let nextStep = this.getStep(nextStepId);    
+
+    this.addLogStep({
+      id: currentStep.id, 
+      type: currentStep.type,
+      params: currentStep.params,
+      input: this.currentInput,
+      output: data,
+      nextStepId: nextStep ? nextStep.id : null,
+    })
 
     if (!nextStepId) {
       return;
@@ -73,6 +82,10 @@ class FlowTask {
 
   getQueueTaskId() {
     return this.id + '%' + this.index + '%' + this.currentStepId;
+  }
+
+  static getTaskIdFromQueueTaskId(queueTaskId) {
+    return queueTaskId.split('%')[0];
   }
 }
 
@@ -164,24 +177,12 @@ const qe = {
 
 const onCompleted = async (job: BullJobResult) => {
   console.log('job:', job, 'completed');
-  console.log('id:', job.jobId);
-  console.log('return value:', job.returnvalue);
 
   const data = job.returnvalue;
-  const flowTaskId = job.jobId.split('%')[0];
+  const flowTaskId = FlowTask.getTaskIdFromQueueTaskId(job.jobId);
   const flowtask = flowTaskInventory.get(flowTaskId);
 
-  const currentStep = flowtask.getCurrentStep();
   const nextStep = flowtask.getNextStep(data);
-
-  flowtask.addLogStep({
-    id: currentStep.id, 
-    type: currentStep.type, 
-    params: currentStep.params,
-    input: flowtask.currentInput,
-    output: data,
-    nextStepId: nextStep.id,
-  });
 
   //console.log('flowtask', inspect(flowtask,{ showHidden: true, depth: null }));
   console.log('next step', nextStep);
