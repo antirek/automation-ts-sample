@@ -1,5 +1,3 @@
-import { timeStamp } from "console";
-
 const express = require('express');
 
 const { Queue, QueueEvents, Job } = require('bullmq');
@@ -41,12 +39,24 @@ class FlowTask {
     return this.getStep(this.currentStepId);
   }
 
-  getNextStep(data: object) {
+  getNextStep(data: object): Step {
     const currentStep = this.getCurrentStep();
     if (!currentStep.next) {
       return;
     }
-    return currentStep.next(data);
+    const nextStepId = currentStep.next(data);
+    let nextStep;
+    if (this.flow && this.flow.steps) {
+      nextStep = this.flow.steps.find(step => step.id === nextStepId)
+    }
+
+    if (!nextStepId) {
+      return;
+    }
+
+    this.index++;
+    this.currentStepId = nextStep.id;
+    return nextStep;
   }
 
   addLogStep(obj: LogStep) {
@@ -68,7 +78,9 @@ class FlowTask {
 
 class FlowTaskInventory {
   flowtasks: FlowTask[];
-  constructor () {}
+  constructor () {
+    this.flowtasks = [];
+  }
 
   add(flowtask: FlowTask) {
     this.flowtasks.push(flowtask);
@@ -83,13 +95,15 @@ class FlowTaskInventory {
   }
 }
 
+const flowTaskInventory = new FlowTaskInventory();
+
 interface LogStep {
   id: string,
   type: string,
   params: {},
   input: {},
   output: {},
-  nextStepid: string,
+  nextStepId: string,
 }
 
 interface Step {
@@ -130,20 +144,6 @@ const getFlow = (id: string): Flow => {
   return flows.find(item => item.id === id);
 }
 
-const getStep = (flow: Flow, stepId: string) => {
-  if (!flow.steps) {
-    console.log('no steps', flow.id)
-    return;
-  }
-  return flow.steps.find(step => step.id === stepId);
-}
-
-const getFirstStep = (flow: Flow) => {
-  const stepId = 'start';
-  return getStep(flow, stepId);
-}
-
-const flowtasks = {};
 cache.setConnections('test', getFlow('test').connections);
 
 const queues = {
@@ -169,38 +169,21 @@ const onCompleted = async (job: BullJobResult) => {
 
   const data = job.returnvalue;
   const flowTaskId = job.jobId.split('%')[0];
-  const flowtask = flowtasks[flowTaskId];
-  
+  const flowtask = flowTaskInventory.get(flowTaskId);
 
-  const currentStep = flowtask.currentStep;
+  const currentStep = flowtask.getCurrentStep();
+  const nextStep = flowtask.getNextStep(data);
 
-  const next = flowtask.currentStep.next;
-  if (!flowtasks[flowTaskId].logSteps) {
-    flowtasks[flowTaskId].logSteps = [];
-  };
-  const nextStepId = next ? next(data): null;
-  flowtasks[flowTaskId].logSteps.push({
+  flowtask.addLogStep({
     id: currentStep.id, 
     type: currentStep.type, 
     params: currentStep.params,
     input: flowtask.currentInput,
     output: data,
-    nextStepId,
+    nextStepId: nextStep.id,
   });
 
-  console.log('flowtask', inspect(flowtask,{ showHidden: true, depth: null }));
-  if (!next) {
-    console.log('flow end, no next step in current step');
-
-    delete flowtasks[flowTaskId];
-    console.log('current flowtasks', flowtasks);
-    return;
-  }
-  
-  console.log('nextStepId', nextStepId);
-  const flow = getFlow(flowtask.flowId);
-  const nextStep = getStep(flow, nextStepId);
-
+  //console.log('flowtask', inspect(flowtask,{ showHidden: true, depth: null }));
   console.log('next step', nextStep);
 
   if(!nextStep) {
@@ -209,16 +192,15 @@ const onCompleted = async (job: BullJobResult) => {
   }
   
   const q = queues[nextStep.type];
-  
-  flowtasks[flowTaskId].currentStep = nextStep;
-  flowtasks[flowTaskId].currentInput = data;
-  const index = flowtasks[flowTaskId].index++;
+  flowtask.setCurrentInput(data);
+  const jobId = flowtask.getQueueTaskId();
 
+  console.log({jobId, data})
   q.add(flowTaskId, {
     params: nextStep.params,
     data: job.returnvalue,
   }, {
-    jobId: flowTaskId + '%' + index + '%' + nextStep.id,
+    jobId
   });
 }
 
@@ -233,34 +215,26 @@ app.get('/', (req, res) => {
 });
 
 app.post('/flow/:id', async (req, res) => {
-  const flowTaskId = uuidv4();
-
-  const data = req.body;
   const flowId = req.params.id;
+  const data = req.body;
   const flow = getFlow(flowId);
+
   if (!flow) {
-    console.log(flowTaskId, 'no flow', flowId);
+    console.log('no flow', flowId);
     return;
   }
 
+  const flowtask = new FlowTask(flow);
+
+  flowtask.setCurrentInput(data);
+  flowTaskInventory.add(flowtask);
+  const flowTaskId = flowtask.getId();
   res.send(flowTaskId);
 
-  const step = getFirstStep(flow);
-  console.log(flowTaskId, 'start flow');
-  console.log(flowTaskId, 'step type:', step.type);
-  console.log(flowTaskId, 'data', data);
+  const step = flowtask.getFirstStep();
 
   const q = queues.validate;
-  flowtasks[flowTaskId] = {
-    flowId,
-    currentStep: step,
-    currentInput: data,
-    index: 1,
-    flowTaskId,
-  };
-
-  q.add(flowTaskId, {params: step.params, data}, {jobId: flowTaskId + '%' + step.id});
-  console.log('flowtasks', flowtasks);
+  q.add(flowTaskId, {params: step.params, data}, {jobId: flowtask.getQueueTaskId()});
 });
 
 app.listen(port, () => {

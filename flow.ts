@@ -27,13 +27,13 @@ module.exports = [
     steps: [
       {
         id: 'start',
-        type: 'validate',        
+        type: 'validate',
         next: () => {
-          return 2;
+          return '2';
         },
       },
       {
-        id: 2,
+        id: '2',
         type: 'httprequest',        
         params: {
           validate: true,
