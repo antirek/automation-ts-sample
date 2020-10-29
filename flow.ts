@@ -27,60 +27,52 @@ module.exports = [
     steps: [
       {
         id: 'start',
-        type: 'validate',
-        next: () => {
-          return '2';
-        },
+        type: 'start',
+        out: 'httpRequestParams',
+        next: 'exec-httprequest',
       },
       {
-        id: '2',
-        type: 'httprequest',        
+        id: 'exec-httprequest',
+        type: 'executor',
+        executor: 'httprequestExecutor',
         params: {
           validate: true,
           connectionId: 'crm',
         },
-        next: (res) => {
-          const status = res.status;
-          const q = [
-            {
-              status: 'success',
-              stepId: 4,
-            },
-            {
-              status: 'fail',
-              stepId: 3,
-            },
-          ];
-          const n = q.find(i => i.status === status);
-          return n.stepId;
-        }
+        next: 'selector-one',
       },
       {
-        id: 3,
-        type: 'email',        
+        id: 'selector-one',
+        type: 'selector',
+        selector: 'successFailSelector',
         params: {
-          to: 'vasya@test.ru',
-          connectionId: 'email-yandex',
-        }        
-      },
-      {
-        id: 4,
-        type: 'select',
-        params: {
-          checkField: 'status',
-          variants: [
-            {
-              status: 'stable',
-              stepId: 'cache',
-            },{
-              status: 'another-worlds',
-              stepId: 2,
-            },
-          ],
+          list: {
+            'success': 'successmodificator-email1',
+            'fail': 'failmodificator-email2'
+          },
         },
-        next: (data) => {
-          return data;;
-        }
+      },
+      {
+        id: 'successmodificator-email1',
+        type: 'modificator',
+        modificator: 'successhttprequest2emailModificator',
+        next: 'executor-email',
+      },
+      {
+        id: 'failmodificator-email2',
+        type: 'modificator',
+        modificator: 'failhttprequest2email',
+        next: 'executor-email',  
+      },
+      {
+        id: 'executor-email',
+        type: 'executor',
+        executor: 'email',
+      },
+      {
+        id: 'executor-email',
+        type: 'end',
+        executor: 'email',
       },
     ],
   },

@@ -7,152 +7,14 @@ const { inspect } = require('util');
 const flows = require('./flow');
 const cache = require('./cache')();
 
-class FlowTask {
-  id: string;
-  flow: Flow;
-  currentStepId: string;
-  currentInput: object;
-  index: number;
-  logSteps: LogStep[];
-
-  constructor(flow) {
-    this.id = uuidv4()
-    this.flow = flow;
-    this.index = 0;
-    this.logSteps = [];
-  }
-
-  getStep(stepId: string) {
-    if (!this.flow && !this.flow.steps) {
-      return;
-    }
-    return this.flow.steps.find(step => step.id === stepId);
-  }
-
-  getFirstStep() {
-    this.currentStepId = 'start';
-    this.index = 1;
-    return this.getStep(this.currentStepId);
-  }
-
-  getCurrentStep() {
-    return this.getStep(this.currentStepId);
-  }
-
-  getNextStep(data: object): Step {
-    const currentStep = this.getCurrentStep();
-    if (!currentStep.next) {
-      return;
-    }
-    const nextStepId = currentStep.next(data);
-    if (!nextStepId) {
-      console.log('no nextStepId on currentStepId:', currentStep.id, ', data:', data);
-    }
-    let nextStep = this.getStep(nextStepId);    
-
-    this.addLogStep({
-      id: currentStep.id, 
-      type: currentStep.type,
-      params: currentStep.params,
-      input: this.currentInput,
-      output: data,
-      nextStepId: nextStep ? nextStep.id : null,
-    })
-
-    if (!nextStepId) {
-      return;
-    }
-
-    this.index++;
-    this.currentStepId = nextStep.id;
-    return nextStep;
-  }
-
-  addLogStep(obj: LogStep) {
-    this.logSteps.push(obj);
-  }
-
-  setCurrentInput(input: object) {
-    this.currentInput = input;
-  }
-
-  getId() {
-    return this.id;
-  }
-
-  getQueueTaskId() {
-    return this.id + '%' + this.index + '%' + this.currentStepId;
-  }
-
-  static getTaskIdFromQueueTaskId(queueTaskId) {
-    return queueTaskId.split('%')[0];
-  }
-}
-
-class FlowTaskInventory {
-  flowtasks: FlowTask[];
-  constructor () {
-    this.flowtasks = [];
-  }
-
-  add(flowtask: FlowTask) {
-    this.flowtasks.push(flowtask);
-  }
-
-  get(id: string) {
-    return this.flowtasks.find(ft => ft.getId() === id);
-  }
-
-  remove(id: string) {
-    this.flowtasks;
-  }
-}
+const {FlowTask, FlowTaskInventory, Flow} = require('./objects');
 
 const flowTaskInventory = new FlowTaskInventory();
-
-interface LogStep {
-  id: string,
-  type: string,
-  params: {},
-  input: {},
-  output: {},
-  nextStepId: string,
-}
-
-interface Step {
-  id: string,
-  type: string,
-  params: {},
-  next(data: object): string,
-}
-
-interface QueueTask {
-  id: string,
-  params: {},
-  data: {},
-}
-
-interface Connection {
-  id: string,
-  uri: string,
-}
-
-interface Flow {
-  id: string,
-  steps: Step[],
-  connections: Connection[],
-}
-
-interface BullJobResult {
-  jobId: string,
-  returnvalue: object,
-}
-
 const app = express();
 app.use(express.json());
 const port = 3000;
 
-const getFlow = (id: string): Flow => {
+const getFlow = (id: string) => {
   // console.log('flows', flows);
   return flows.find(item => item.id === id);
 }
@@ -175,7 +37,7 @@ const qe = {
   email: new QueueEvents('email'),
 }
 
-const onCompleted = async (job: BullJobResult) => {
+const onCompleted = async (job) => {
   console.log('job:', job, 'completed');
 
   const data = job.returnvalue;
@@ -235,7 +97,10 @@ app.post('/flow/:id', async (req, res) => {
   const step = flowtask.getFirstStep();
 
   const q = queues.validate;
-  q.add(flowTaskId, {params: step.params, data}, {jobId: flowtask.getQueueTaskId()});
+  q.add(flowTaskId, {
+    params: step.params, 
+    data
+  }, {jobId: flowtask.getQueueTaskId()});
 });
 
 app.listen(port, () => {
